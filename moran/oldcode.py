@@ -34,6 +34,65 @@ def weighted_choice(weights):
     return np.searchsorted(cdf, r)
 
 ########################################################################################################################################
+
+
+
+@njit()
+def Quadratic_simulate_evolution_clip_count_effectiveM(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, trait_values):
+    n_individuals = len(trait_values)
+    skwl = np.zeros(tmax)
+    stdl = np.zeros(tmax)
+    mean_trait_values = np.zeros(tmax)
+    cum_mean_trait_value=0
+    b_clip_count = np.zeros(tmax)
+    d_clip_count = np.zeros(tmax)
+    b_clip_mass = np.zeros(tmax)
+    d_clip_mass = np.zeros(tmax)
+    mu_b = np.zeros(tmax)
+    mu_d = np.zeros(tmax)
+
+    for t in range(1, tmax):
+        tv2 = trait_values**2
+        wb = 1 + b1_rate * trait_values + b2_rate * tv2;  wb_neg_mass = np.sum(np.maximum(-(wb), 0))
+        wd = 1 - d1_rate * trait_values - d2_rate * tv2;  wd_neg_mass = np.sum(np.maximum(-(wd), 0))
+        wb_eff = np.where(wb > 0.0, wb, 0.0);        wb_eff_mass = np.sum(wb_eff)
+        wd_eff = np.where(wd > 0.0, wd, 0.0);        wd_eff_mass = np.sum(wd_eff)
+
+        if b1_rate != 0.0:
+            tv_b_cut = np.where(trait_values < -1.0/b1_rate, trait_values, np.nan)
+        else:
+            tv_b_cut = np.full_like(trait_values, np.nan)
+
+        if d1_rate != 0.0:
+            tv_d_cut = np.where(trait_values >  1.0/d1_rate, trait_values, np.nan)
+        else:
+            tv_d_cut = np.full_like(trait_values, np.nan)
+        
+        b_clip_count[t] = np.sum(wb < 0) / n_individuals
+        d_clip_count[t] = np.sum(wd < 0) / n_individuals
+        b_clip_mass[t] = wb_neg_mass / (wb_eff_mass+wb_neg_mass)
+        d_clip_mass[t] = wd_neg_mass / (wd_eff_mass+wd_neg_mass)
+
+        mu_d[t] = np.nansum(1/tv_d_cut)
+        mu_b[t] = np.nansum(1/np.abs(tv_b_cut))
+
+        birth_weight = np.clip(wb, 0, np.inf)  
+        death_weight = np.clip(wd, 0, np.inf) 
+        indice_birth = weighted_choice(birth_weight)
+        indice_death = weighted_choice(death_weight)
+        birth_trait = trait_values[indice_birth] + np.random.normal(0, 1)
+        trait_values[indice_death] = birth_trait 
+        current_mean_trait_value = np.mean(trait_values)
+        cum_mean_trait_value += current_mean_trait_value
+        trait_values -= current_mean_trait_value
+        mean_trait_values[t] = cum_mean_trait_value
+        stdl[t] = np.std(trait_values)
+        if stdl[t] == 0: skwl[t] = 0
+        else: skwl[t] = np.sum((trait_values - np.mean(trait_values)) ** 3) / (n_individuals * stdl[t]**3)
+    stdl[0] = 1e-8;                 skwl[0] = 0
+    return mean_trait_values[indices], skwl[indices], stdl[indices], b_clip_count[indices], d_clip_count[indices], b_clip_mass[indices], d_clip_mass[indices], mu_b[indices], mu_d[indices]
+
+########################################################################################################################################
 @njit()
 def Quadratic_simulate_evolution(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, trait_values):
     n_individuals = len(trait_values)
