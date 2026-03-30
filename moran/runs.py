@@ -83,167 +83,6 @@ def hist_dynamic_minmax(x, nbins):
 
     return counts, edges
 
-########################################################################################################################################
-
-@njit()  #Main3D, Clipp, Moments, Moments_right_tail, Moments_left_tail
-def Quad_Sim_V0(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, trait_values):
-    n_individuals = len(trait_values)
-    n_out = len(indices)
-
-    # Main arrays
-    Main_3D = np.zeros((3, n_out))  # 0: mean, 1: skew, 2: std
-    Clipp = np.zeros((6, n_out)) # 0: birth_clipped_count, 1: death_clipped_count, 2: birth_clip_mass, 3: death_clip_mass, 4: wb eff mass, 5: wd eff mass
-    Moments_right_tail = np.zeros((4, n_out)) 
-    Moments_left_tail = np.zeros((4, n_out))
-    Moments = np.zeros((4, n_out))  # 0: mu1, 1: mu2, 2: mu3, 3: mu4
-
-    k=0
-    cum_mean_trait_value=0
-    for t in range(1, tmax):
-        tv2 = trait_values ** 2
-        wb = 1 + b1_rate * trait_values + b2_rate * tv2
-        wd = 1 - d1_rate * trait_values - d2_rate * tv2
-        wb_eff = np.clip(wb, 0.0, np.inf)
-        wd_eff = np.clip(wd, 0.0, np.inf)
-        indice_birth = weighted_choice(wb_eff)
-        indice_death = weighted_choice(wd_eff)
-        birth_trait = trait_values[indice_birth] + np.random.normal(0, 1)
-        trait_values[indice_death] = birth_trait
-        current_mean = np.mean(trait_values)
-        cum_mean_trait_value += current_mean
-        trait_values -= current_mean
-
-        if k < n_out and t == indices[k]:
-            wb_neg_mass = np.sum(np.maximum(-wb, 0))
-            wd_neg_mass = np.sum(np.maximum(-wd, 0))
-            wb_eff_mass = np.sum(wb_eff)
-            wd_eff_mass = np.sum(wd_eff)
-
-            Clipp[0, k] = np.sum(wb < 0) / n_individuals
-            Clipp[1, k] = np.sum(wd < 0) / n_individuals
-            Clipp[2, k] = wb_neg_mass / (wb_eff_mass+wb_neg_mass)
-            Clipp[3, k] = wd_neg_mass / (wd_eff_mass+wd_neg_mass)
-            Clipp[4, k] = wb_eff_mass
-            Clipp[5, k] = wd_eff_mass
-
-            h = 0.5 * (np.max(trait_values) - np.min(trait_values)) / np.sqrt(n_individuals)
-            if b1_rate != 0.0:
-                tv_b_cut = np.where(trait_values < -1.0/b1_rate, trait_values, np.nan)  # left tail
-            else:
-                tv_b_cut = np.full_like(trait_values, np.nan)
-            if d1_rate != 0.0:
-                tv_d_cut = np.where(trait_values >  1.0/d1_rate, trait_values, np.nan)  # right tail
-            else:
-                tv_d_cut = np.full_like(trait_values, np.nan)
-
-            Moments_right_tail[0, k] = np.nansum(tv_d_cut)
-            Moments_right_tail[1, k] = np.nansum(tv_d_cut**2)
-            Moments_right_tail[2, k] = np.nansum(tv_d_cut**3)
-            Moments_right_tail[3, k] = np.nansum(tv_d_cut**4)
-
-            Moments_left_tail[0, k] = np.nansum(tv_b_cut)
-            Moments_left_tail[1, k] = np.nansum(tv_b_cut**2)
-            Moments_left_tail[2, k] = np.nansum(tv_b_cut**3)
-            Moments_left_tail[3, k] = np.nansum(tv_b_cut**4)
-
-            Moments[0, k] = np.mean(trait_values**1)
-            Moments[1, k] = np.mean(trait_values**2)
-            Moments[2, k] = np.mean(trait_values**3)
-            Moments[3, k] = np.mean(trait_values**4)
-
-            Main_3D[0, k] = cum_mean_trait_value
-            Main_3D[2, k] = np.std(trait_values)
-            if Main_3D[2, k] == 0: Main_3D[1, k] = 0
-            else: Main_3D[1, k] = np.sum((trait_values - np.mean(trait_values)) ** 3) / (n_individuals * Main_3D[2, k]**3)
-
-            k += 1
-
-    return Main_3D, Clipp, Moments, Moments_right_tail, Moments_left_tail
-
-@njit()  #Main3D, Clipp, Moments, Moments_right_tail, Moments_left_tail, Hist_counts, Hist_edges
-def Quad_Sim_V1(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, trait_values, nbins=128):
-    n_individuals = len(trait_values)
-    n_out = len(indices)
-
-    # Main arrays
-    Main_3D = np.zeros((3, n_out))  # 0: mean, 1: skew, 2: std
-    Clipp = np.zeros((6, n_out)) # 0: birth_clipped_count, 1: death_clipped_count, 2: birth_clip_mass, 3: death_clip_mass, 4: wb eff mass, 5: wd eff mass
-    Moments_right_tail = np.zeros((4, n_out)) 
-    Moments_left_tail = np.zeros((4, n_out))
-    Moments = np.zeros((4, n_out))  # 0: mu1, 1: mu2, 2: mu3, 3: mu4
-
-    # NEW: histogram storage
-    Hist_counts = np.zeros((n_out, nbins), dtype=np.int64)
-    Hist_edges  = np.zeros((n_out, nbins + 1), dtype=np.float64)
-
-    k=0
-    cum_mean_trait_value=0
-    for t in range(1, tmax):
-        tv2 = trait_values ** 2
-        wb = 1 + b1_rate * trait_values + b2_rate * tv2
-        wd = 1 - d1_rate * trait_values - d2_rate * tv2
-        wb_eff = np.clip(wb, 0.0, np.inf)
-        wd_eff = np.clip(wd, 0.0, np.inf)
-        indice_birth = weighted_choice(wb_eff)
-        indice_death = weighted_choice(wd_eff)
-        birth_trait = trait_values[indice_birth] + np.random.normal(0, 1)
-        trait_values[indice_death] = birth_trait
-        current_mean = np.mean(trait_values)
-        cum_mean_trait_value += current_mean
-        trait_values -= current_mean
-
-        if k < n_out and t == indices[k]:
-            wb_neg_mass = np.sum(np.maximum(-wb, 0))
-            wd_neg_mass = np.sum(np.maximum(-wd, 0))
-            wb_eff_mass = np.sum(wb_eff)
-            wd_eff_mass = np.sum(wd_eff)
-
-            Clipp[0, k] = np.sum(wb < 0) / n_individuals
-            Clipp[1, k] = np.sum(wd < 0) / n_individuals
-            Clipp[2, k] = wb_neg_mass / (wb_eff_mass+wb_neg_mass)
-            Clipp[3, k] = wd_neg_mass / (wd_eff_mass+wd_neg_mass)
-            Clipp[4, k] = wb_eff_mass
-            Clipp[5, k] = wd_eff_mass
-
-
-            h = 0.5 * (np.max(trait_values) - np.min(trait_values)) / np.sqrt(n_individuals)
-            if b1_rate != 0.0:
-                tv_b_cut = np.where(trait_values < -1.0/b1_rate, trait_values, np.nan)  # left tail
-            else:
-                tv_b_cut = np.full_like(trait_values, np.nan)
-            if d1_rate != 0.0:
-                tv_d_cut = np.where(trait_values >  1.0/d1_rate, trait_values, np.nan)  # right tail
-            else:
-                tv_d_cut = np.full_like(trait_values, np.nan)
-
-            Moments_right_tail[0, k] = np.nansum(tv_d_cut)
-            Moments_right_tail[1, k] = np.nansum(tv_d_cut**2)
-            Moments_right_tail[2, k] = np.nansum(tv_d_cut**3)
-            Moments_right_tail[3, k] = np.nansum(tv_d_cut**4)
-
-            Moments_left_tail[0, k] = np.nansum(tv_b_cut)
-            Moments_left_tail[1, k] = np.nansum(tv_b_cut**2)
-            Moments_left_tail[2, k] = np.nansum(tv_b_cut**3)
-            Moments_left_tail[3, k] = np.nansum(tv_b_cut**4)
-
-            Moments[0, k] = np.mean(trait_values**1)
-            Moments[1, k] = np.mean(trait_values**2)
-            Moments[2, k] = np.mean(trait_values**3)
-            Moments[3, k] = np.mean(trait_values**4)
-
-            Main_3D[0, k] = cum_mean_trait_value
-            Main_3D[2, k] = np.std(trait_values)
-            if Main_3D[2, k] == 0: Main_3D[1, k] = 0
-            else: Main_3D[1, k] = np.sum((trait_values - np.mean(trait_values)) ** 3) / (n_individuals * Main_3D[2, k]**3)
-
-            # NEW: store dynamic histogram at this output time
-            c, e = hist_dynamic_minmax(trait_values, nbins)
-            Hist_counts[k, :] = c
-            Hist_edges[k, :]  = e
-
-            k += 1
-
-    return Main_3D, Clipp, Moments, Moments_right_tail, Moments_left_tail, Hist_counts, Hist_edges
 
 @njit() # All_tv, Main_3D, Clipp, Moments, Moments_right_tail, Moments_left_tail, Hist_counts, Hist_edges
 def Quad_Sim_V2(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, trait_values, nbins=128):
@@ -346,8 +185,6 @@ def Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_la
         n_out = len(indices)
 
         All_tv, Main_3D, Clipp, Moments, Moments_right_tail, Moments_left_tail, Hist_counts, Hist_edges = Quad_Sim_V2(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, np.zeros(n_individuals), nbins=nbins)
-        print(All_tv.shape)
-        print(All_tv[0, :50])
   
         skwl = Main_3D[1, :]
         stdl = Main_3D[2, :]
@@ -592,20 +429,19 @@ def Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_la
 
         return metadata
 
-    results = Parallel(n_jobs=n_jobs, verbose=0, backend="threading")( delayed(process_one_combo)(i) for i in tqdm(range(n_combos), total=len(combinations), desc="Simulating", ncols=100) )    # (n_jobs=n_jobs, backend='loky')
+    results = Parallel(n_jobs=n_jobs, verbose=0, backend='loky')( delayed(process_one_combo)(i) for i in tqdm(range(n_combos), total=len(combinations), desc="Simulating", ncols=100) )    # (n_jobs=n_jobs, backend='loky')   , backend="threading"
     summary_path = os.path.join(save_dir, f"{t_lag}_ALL_summaries.csv")
     pd.DataFrame(results).to_csv(summary_path, index=False)
     print(f"\n✅ All summaries saved to {summary_path}")
 
 
-
-nlist = np.array([3000, 5000])  # , 10000    10, 50 ,100, 500, 1000, 5000
+nlist = np.array([3000])  # , 10000    10, 50 ,100, 500, 1000, 5000
 b1list = np.arange(0.1,1.001 ,0.1)   
 d1list = np.arange(0.1,1.001 ,0.1) 
 b2list = np.array([0])
 d2list = np.array([0])
-skip = 10
-tmax = 110 
+skip = 20
+tmax = 1020 
 nbins = 128
 t_lag  = 100
 nansa = 1
@@ -614,5 +450,5 @@ save_dir=f"/flash/DieckmannU/Abolfazl/Hump_({nlist[0]},{nlist[-1]})_b1({b1list[0
 # save_dir=REPORTS_DIR / f"Hump_({nlist[0]},{nlist[-1]})_b1({b1list[0]},{b1list[-1]})_b2({b2list[0]},{b2list[-1]})_d1({d1list[0]},{d1list[-1]})_d2({d2list[0]},{d2list[-1]})_skip({skip})_tmax({tmax})_tlag({t_lag})_nansa({nansa})"
 os.makedirs(save_dir, exist_ok=True)
 # methods.Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_lag, save_dir, nbins, nansa=nansa, n_jobs=6)
-Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_lag, save_dir, nbins, nansa=nansa, n_jobs=128)
+Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_lag, save_dir, nbins, nansa=nansa, n_jobs=100)
 

@@ -70,6 +70,55 @@ def hist_dynamic_minmax(x, nbins):
 
     return counts, edges
 
+def generate_trait_distribution_with_hump(n_individuals, mean=0.0, variance=1.0, hump_mass_fraction=0.15, hump_position_sigma=2.5, hump_width=0.5, seed=None):
+    """
+    Generate trait values with a Gaussian core + right-tail hump.
+    
+    Parameters
+    ----------
+    n_individuals : int
+        Total number of individuals
+    mean : float
+        Mean of the main Gaussian distribution
+    variance : float
+        Variance of the main Gaussian distribution
+    hump_mass_fraction : float
+        Fraction of individuals in the hump (0 to 1)
+    hump_position_sigma : float
+        Position of hump center in units of std from mean
+    hump_width : float
+        Width (std) of the hump Gaussian
+    seed : int or None
+        Random seed for reproducibility
+        
+    Returns
+    -------
+    trait_values : ndarray
+        Array of trait values with shape (n_individuals,)
+    """
+    if seed is not None:
+        np.random.seed(seed)
+    
+    std = np.sqrt(variance)
+    
+    # Number of individuals in each component
+    n_hump = int(n_individuals * hump_mass_fraction)
+    n_core = n_individuals - n_hump
+    
+    # Generate core Gaussian
+    core_traits = np.random.normal(mean, std, n_core)
+    
+    # Generate hump (positioned in right tail)
+    hump_center = mean + hump_position_sigma * std
+    hump_traits = np.random.normal(hump_center, hump_width, n_hump)
+    
+    # Combine and shuffle
+    trait_values = np.concatenate([core_traits, hump_traits])
+    np.random.shuffle(trait_values)
+    
+    return trait_values
+
+
 ########################################################################################################################################
 
 @njit()  #Main3D, Clipp, Moments, Moments_right_tail, Moments_left_tail
@@ -320,8 +369,6 @@ def Quad_Sim_V2(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, trait_values,
 
     return All_tv, Main_3D, Clipp, Moments, Moments_right_tail, Moments_left_tail, Hist_counts, Hist_edges
 
-
-
 def Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_lag, save_dir, nbins, nansa=10, n_jobs=6):
     combinations = list(product(*[nlist] + [b1list] + [b2list] + [d1list] + [d2list]))
     n_combos = len(combinations)
@@ -333,9 +380,7 @@ def Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_la
         n_out = len(indices)
 
         All_tv, Main_3D, Clipp, Moments, Moments_right_tail, Moments_left_tail, Hist_counts, Hist_edges = Quad_Sim_V2(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, np.zeros(n_individuals), nbins=nbins)
-        print(All_tv.shape)
-        print(All_tv[0, :50])
-  
+
         skwl = Main_3D[1, :]
         stdl = Main_3D[2, :]
         mean_trait_values = Main_3D[0, :]
@@ -473,7 +518,7 @@ def Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_la
 
         # Waiting times between hump events
         if len(hump_events) > 1:
-            waiting_times = np.diff(indices[hump_events]) * t_lag
+            waiting_times = np.diff(indices[hump_events])
             mean_waiting = np.mean(waiting_times)
             std_waiting = np.std(waiting_times)
         else:
@@ -579,201 +624,131 @@ def Metadata_Quad_Sim_V2(nlist, b1list, b2list, d1list, d2list, tmax, skip, t_la
 
         return metadata
 
-    results = Parallel(n_jobs=n_jobs, verbose=0, backend="threading")( delayed(process_one_combo)(i) for i in tqdm(range(n_combos), total=len(combinations), desc="Simulating", ncols=100) )    # (n_jobs=n_jobs, backend='loky')
+    results = Parallel(n_jobs=n_jobs, verbose=0)( delayed(process_one_combo)(i) for i in tqdm(range(n_combos), total=len(combinations), desc="Simulating", ncols=100) )    # (n_jobs=n_jobs, backend='loky') , backend="threading"
     summary_path = os.path.join(save_dir, f"{t_lag}_ALL_summaries.csv")
     pd.DataFrame(results).to_csv(summary_path, index=False)
     print(f"\n✅ All summaries saved to {summary_path}")
 
+def GMM(b1_rate, d1_rate, TV, Hist_edges, t_lag, sep_threshold=1.5, xic="bic"):  
+
+    n_out = TV.shape[0]
+    Nb1 = np.zeros(n_out)
+    Nb2 = np.zeros(n_out)
+    Nd1 = np.zeros(n_out)
+    Nd2 = np.zeros(n_out)
+    Db1_1 = np.zeros(n_out)
+    Db1_2 = np.zeros(n_out)
+    Dd1_1 = np.zeros(n_out)
+    Dd1_2 = np.zeros(n_out)
+    Db2_1 = np.zeros(n_out)
+    Db2_2 = np.zeros(n_out)
+    Dd2_1 = np.zeros(n_out)
+    Dd2_2 = np.zeros(n_out)
+    Db3_1 = np.zeros(n_out)
+    Db3_2 = np.zeros(n_out)
+    Dd3_1 = np.zeros(n_out)
+    Dd3_2 = np.zeros(n_out)
 
 
+    bimodal_flag = np.zeros(n_out, dtype=bool)
+    hump_left = np.full(n_out, np.nan)
+    hump_right = np.full(n_out, np.nan)
+    hump_weight_left = np.full(n_out, np.nan)
+    hump_weight_right = np.full(n_out, np.nan)
+    hump_std_left = np.full(n_out, np.nan)
+    hump_std_right = np.full(n_out, np.nan)
+
+    for k in range(0, n_out):
+        trait_values = TV[k, :].reshape(-1,1)
+        gmm1 = GaussianMixture(n_components=1)
+        gmm1.fit(trait_values)
+        xic1 = getattr(gmm1, xic)(trait_values)
+        gmm2 = GaussianMixture(n_components=2)
+        gmm2.fit(trait_values)
+        xic2 = getattr(gmm2, xic)(trait_values)
+        mean2 = gmm2.means_.flatten()
+        std2 = np.sqrt(gmm2.covariances_.flatten())
+        weights2 = gmm2.weights_.flatten()
+        sep = abs(mean2[0] - mean2[1]) / np.sqrt(std2[0]**2 + std2[1]**2)
+        x_range = np.linspace(Hist_edges[k, 0], Hist_edges[k, -1], 128).reshape(-1,1)
+        resp = gmm2.predict_proba(trait_values)
+        labels = np.argmax(resp, axis=1)
+        if xic2 < xic1 and sep > sep_threshold:
+            bimodal_flag[k] = True
+            # sort humps left/right
+            order = np.argsort(mean2)
+            hump_left[k] = mean2[order[0]]
+            hump_right[k] = mean2[order[1]]
+            hump_weight_left[k] = weights2[order[0]]
+            hump_weight_right[k] = weights2[order[1]]
+            hump_std_left[k] = std2[order[0]]
+            hump_std_right[k] = std2[order[1]]
+            order = np.argsort(mean2)
+            left_comp = order[0]
+            right_comp = order[1]
+            labels = np.where(labels == left_comp, 1, 2)
+            # logprob = gmm2.score_samples(x_range)
+            # pdf_hump = np.exp(logprob)
+        # else:
+        #     logprob = gmm1.score_samples(x_range)
+        #     pdf_hump = np.exp(logprob)
+        x = trait_values.flatten()
+        birth_adm = (1 + b1_rate * x) > 0
+        death_adm = (1 - d1_rate * x) > 0
+        m1 = labels == 1
+        m2 = labels == 2
+
+        Nb1[k] = np.sum(m1 & birth_adm)
+        Nb2[k] = np.sum(m2 & birth_adm)
+
+        Nd1[k] = np.sum(m1 & death_adm)
+        Nd2[k] = np.sum(m2 & death_adm)
+
+        Db1_1[k] = np.sum(x[m1 & birth_adm])
+        Db1_2[k] = np.sum(x[m2 & birth_adm])
+        Dd1_1[k] = np.sum(x[m1 & death_adm])
+        Dd1_2[k] = np.sum(x[m2 & death_adm])
+
+        Db2_1[k] = np.sum(x[m1 & birth_adm]**2)
+        Db2_2[k] = np.sum(x[m2 & birth_adm]**2)
+        Dd2_1[k] = np.sum(x[m1 & death_adm]**2)
+        Dd2_2[k] = np.sum(x[m2 & death_adm]**2)
+
+        Db3_1[k] = np.sum(x[m1 & birth_adm]**3)
+        Db3_2[k] = np.sum(x[m2 & birth_adm]**3)
+        Dd3_1[k] = np.sum(x[m1 & death_adm]**3)
+        Dd3_2[k] = np.sum(x[m2 & death_adm]**3)
+
+    results = {
+        "num_bimodal": np.sum(bimodal_flag),
+        "nb1": Nb1,
+        "nb2": Nb2,
+        "nd1": Nd1,
+        "nd2": Nd2,
+        "Db1_1": Db1_1,
+        "Db1_2": Db1_2,
+        "Dd1_1": Dd1_1,
+        "Dd1_2": Dd1_2,
+        "Db2_1": Db2_1,
+        "Db2_2": Db2_2,
+        "Dd2_1": Dd2_1,
+        "Dd2_2": Dd2_2,
+        "Db3_1": Db3_1,
+        "Db3_2": Db3_2,
+        "Dd3_1": Dd3_1,
+        "Dd3_2": Dd3_2,
+        "bimodal_flag": bimodal_flag,
+        "hump_left": hump_left,
+        "hump_right": hump_right,
+        "hump_weight_left": hump_weight_left,
+        "hump_weight_right": hump_weight_right,
+        "hump_std_left": hump_std_left,
+        "hump_std_right": hump_std_right
+    }
+
+    return results
 
 ########################################################################################################################################
-
-
-
-
-
-def hump_detevtor(Hist_counts, Hist_edges, All_tv, b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, nbins=128):
-    n_out, n_individuals = All_tv.shape
-
-    for k in range(n_out): 
-        trait_values = All_tv[k, :].reshape(-1,1)
-        gmm1 = GaussianMixture(n_components=1)
-        gmm1.fit(trait_values)
-        bic1 = gmm1.bic(trait_values)
-        mean1 = gmm1.means_.flatten()[0]
-        std1 = np.sqrt(gmm1.covariances_.flatten()[0])
-        gmm2 = GaussianMixture(n_components=2)
-        gmm2.fit(trait_values)
-        bic2 = gmm2.bic(trait_values)
-        mean2_1, mean2_2 = gmm2.means_.flatten()
-        std2_1, std2_2 = np.sqrt(gmm2.covariances_.flatten())
-        weights2_1, weights2_2 = gmm2.weights_.flatten()
-
-        x_range = np.linspace(Hist_edges[k, 0], Hist_edges[k, -1], 128).reshape(-1,1)
-        if bic2 < bic1 and abs(mean2_1 - mean2_2)/np.sqrt(std2_1**2 + std2_2**2) > 1.5:
-            logprob = gmm2.score_samples(x_range)
-            pdf_hump = np.exp(logprob)
-        # else:
-        #     logprob = gmm1.score_samples(x_range)
-        #     pdf_hump = np.exp(logprob)
-
-
-def save_hist_frames_hump(All_tv, Main_3D, indices, Hist_counts, Hist_edges, lag, n_individuals, out_dir, zname, histskip=10):
-
-    frame_dir = os.path.join(out_dir, "vid2", zname)
-    os.makedirs(frame_dir, exist_ok=True)
-
-    mean = Main_3D[0, :]
-    skw  = Main_3D[1, :]
-    std  = Main_3D[2, :]
-
-    var  = std**2
-    Mdot = np.gradient(mean, 1) * n_individuals / lag
-    Vdot = np.gradient(var, 1)  * n_individuals / lag
-
-    n_out = Hist_counts.shape[0]
-
-    # ---- Global limits for histogram ----
-    global_xmin = np.min([edges[0] for edges in Hist_edges])
-    global_xmax = np.max([edges[-1] for edges in Hist_edges])
-
-    normalized_hists = []
-    global_ymax = 0.0
-
-    for k in range(n_out):
-        counts = Hist_counts[k]
-        edges  = Hist_edges[k]
-        widths = np.diff(edges)
-        total  = np.sum(counts)
-
-        pdf = counts / (total * widths)
-        normalized_hists.append(pdf)
-
-        global_ymax = max(global_ymax, np.max(pdf))
-
-    global_ymax *= 1.05
-
-    # ---- Global limits for time series ----
-    mean_lim = (np.min(mean), np.max(mean))
-    var_lim  = (np.min(var),  np.max(var))
-    skw_lim  = (np.min(skw),  np.max(skw))
-    Mdot_lim = (np.min(Mdot), np.max(Mdot))
-    Vdot_lim = (np.min(Vdot), np.max(Vdot))
-
-    for k in range(0, n_out, histskip):
-
-        trait_values = All_tv[k, :].reshape(-1,1)
-        gmm1 = GaussianMixture(n_components=1)
-        gmm1.fit(trait_values)
-        bic1 = gmm1.bic(trait_values)
-        mean1 = gmm1.means_.flatten()[0]
-        std1 = np.sqrt(gmm1.covariances_.flatten()[0])
-        gmm2 = GaussianMixture(n_components=2)
-        gmm2.fit(trait_values)
-        bic2 = gmm2.bic(trait_values)
-        mean2_1, mean2_2 = gmm2.means_.flatten()
-        std2_1, std2_2 = np.sqrt(gmm2.covariances_.flatten())
-        weights2_1, weights2_2 = gmm2.weights_.flatten()
-
-        x_range = np.linspace(Hist_edges[k, 0], Hist_edges[k, -1], 128).reshape(-1,1)
-        if bic2 < bic1 and abs(mean2_1 - mean2_2)/np.sqrt(std2_1**2 + std2_2**2) > 1.5:
-            logprob = gmm2.score_samples(x_range)
-            pdf_hump = np.exp(logprob)
-        # else:
-        #     logprob = gmm1.score_samples(x_range)
-        #     pdf_hump = np.exp(logprob)
-
-        edges   = Hist_edges[k]
-        pdf     = normalized_hists[k]
-        widths  = np.diff(edges)
-        centers = edges[:-1] + widths/2
-
-        kurt = np.sum(pdf * ((centers - mean[k])/std[k])**4 * widths) - 3.0
-
-        # ----- Create figure -----
-        fig = plt.figure(figsize=(7,10))
-        gs = fig.add_gridspec(5, 1, height_ratios=[2, 1, 1, 1, 1])
-
-        # ==========================
-        # 1️⃣ Histogram panel
-        # ==========================
-        ax0 = fig.add_subplot(gs[0])
-        ax0.stairs(pdf, edges)
-        if bic2 < bic1 and abs(mean2_1 - mean2_2)/np.sqrt(std2_1**2 + std2_2**2) > 1.5:
-            ax0.plot(x_range, pdf_hump, color='red', linestyle='-', label='GMM Fit')
-            ax0.axvline(mean2_1, color='black', linestyle='--', label='mean1')
-            ax0.axvline(mean2_2, color='black', linestyle='--', label='mean2')
-            ax0.legend()
-
-        ax0.set_xlim(global_xmin, global_xmax)
-        ax0.set_ylim(0, global_ymax)
-        ax0.set_title(f"t ={indices[k]/n_individuals:.2f}")
-        ax0.set_ylabel("PDF")
-
-        stats_text = (
-            f"var = {var[k]:.3f}\n"
-            f"skew = {skw[k]:.3f}\n"
-            f"kurt = {kurt:.3f}\n"
-            f"M_dot = {Mdot[k]:.3f}\n"
-            f"V_dot = {Vdot[k]:.3f}\n"
-            f"bic1 = {bic1:.1f}\n"
-            f"bic2 = {bic2:.1f}\n"
-            f"ration = {abs(mean2_1 - mean2_2)/np.sqrt(std2_1**2 + std2_2**2):.3f}"
-        )
-        ax0.text(
-            0.98, 0.95,
-            stats_text,
-            transform=ax0.transAxes,
-            va='top', ha='right',
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
-            fontsize=9
-        )
-
-        # ==========================
-        # 2️⃣ Moments time series
-        # ==========================
-        ax1 = fig.add_subplot(gs[1])
-        ax1.plot(indices/n_individuals, var)
-        ax1.axvline(indices[k]/n_individuals, linestyle="--")
-        ax1.set_xlim(indices[0]/n_individuals-0.5, indices[-1]/n_individuals+0.5)
-        ax1.set_ylabel("Var")
-        ax1.set_xticklabels([])
-        # ==========================
-        ax2 = fig.add_subplot(gs[2])
-        ax2.plot(indices/n_individuals, skw)
-        ax2.axvline(indices[k]/n_individuals, linestyle="--")
-        ax2.set_xlim(indices[0]/n_individuals-0.5, indices[-1]/n_individuals+0.5)
-        ax2.set_ylabel("Skew")
-        ax2.set_xticklabels([])
-        # ==========================
-        ax3 = fig.add_subplot(gs[3])
-        ax3.plot(indices/n_individuals, Mdot)
-        ax3.axvline(indices[k]/n_individuals, linestyle="--")
-        ax3.set_xlim(indices[0]/n_individuals-0.5, indices[-1]/n_individuals+0.5)
-        ax3.set_ylabel("Mdot")
-        ax3.set_xticklabels([])
-        # ==========================
-        ax4 = fig.add_subplot(gs[4])
-        ax4.plot(indices/n_individuals, Vdot)
-        ax4.axvline(indices[k]/n_individuals, linestyle="--")
-        ax4.set_xlim(indices[0]/n_individuals-0.5, indices[-1]/n_individuals+0.5)
-        ax4.set_ylabel("Vdot")
-        ax4.set_xlabel("Time")
-
-        # plt.tight_layout()
-        plt.savefig(os.path.join(frame_dir, f"frame_{k:08d}.png"), dpi=150)
-        plt.close()
-
-def make_video(save_dir, zname, frame_duration=0.5):
-    images = sorted(glob.glob(save_dir + "vid2/" + zname + "/*.png"))
-    with imageio.get_writer(save_dir + zname + "_video2.mp4", fps=1 / frame_duration) as writer:
-        for image_file in images:
-            img = imageio.imread(image_file)
-            writer.append_data(img)
-
-
-
 
 
 ########################################################################################################################################
