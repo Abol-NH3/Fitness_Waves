@@ -53,6 +53,25 @@ def Plot_Moment_dynamics(b1_rate, d1_rate, n_individuals, indices, Mdot, Vdot, T
     fig.savefig(os.path.join(fig_dir, ex_name, f"moment_dynamics.png"), dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
+def Plot_Moment_dynamics_simple( n_individuals, indices, Mdot, Vdot, Tdot, fig_dir, ex_name, figsize=(25, 15), dpi=600):
+    fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True, constrained_layout=True)
+    ax0 = axes[0]
+    ax0.plot(indices/n_individuals, Mdot, label="M dot")
+    ax0.set_ylabel(r"$\dot M$", fontsize=18)
+    ax0.legend(fontsize=18)
+    ax1 = axes[1]
+    ax1.plot(indices/n_individuals, Vdot, label="V dot")
+    ax1.set_ylabel(r"$\dot V$", fontsize=18)
+    ax1.legend(fontsize=18)
+    ax2 = axes[2]
+    ax2.plot(indices/n_individuals, Tdot, label="T dot")
+    ax2.set_xlabel("Time", fontsize=18)
+    ax2.set_ylabel(r"$\dot T$", fontsize=18)
+    ax2.legend(fontsize=18)
+
+    fig.savefig(os.path.join(fig_dir, ex_name, f"moment_dynamics.png"), dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+
 def Plot_Moments(b1_rate, d1_rate, n_individuals, indices, M, V, T, fig_dir, ex_name, figsize=(25, 15), dpi=600):
     os.makedirs(os.path.join(fig_dir, ex_name), exist_ok=True)
     fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True, constrained_layout=True)
