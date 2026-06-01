@@ -222,6 +222,10 @@ def save_hist_frames_hump(All_tv, Main_3D, indices, Hist_counts, Hist_edges, lag
             f"sep = {abs(mean2_1 - mean2_2)/np.sqrt(std2_1**2 + std2_2**2):.3f}\n"
             f"weight1 = {weights2_1:.3f}\n"
             f"weight2 = {weights2_2:.3f}\n"
+            f"mean1 = {mean2_1:.3f}\n"
+            f"mean2 = {mean2_2:.3f}\n"
+            f"std1 = {std2_1:.3f}\n"
+            f"std2 = {std2_2:.3f}\n"
 
         )
         ax0.text(

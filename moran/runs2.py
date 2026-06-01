@@ -171,34 +171,28 @@ def run_single_sim(n_individuals, b1_rate, d1_rate, tmax, indices, t_lag):
     Vdot = np.gradient(stdl**2, 1) * n_individuals / t_lag
     Sdot = np.gradient(Moments[:], 1) * n_individuals / t_lag
 
-    return Mdot, Vdot, Sdot
+    return mean_trait_values, Mdot, Vdot, Sdot
 
 
 
 n_individuals = 20000
-b1_rate = 0.4
-d1_rate = 0.6
+b1_rate = 0.15
+d1_rate = 0.15
 skip = 5
-tmax = 300
+tmax = 10005
 t_lag = 200
 indices = np.arange(skip*n_individuals, tmax*n_individuals, t_lag)
 n_out = len(indices)
 
 
-n_ensemble = 32 
-n_jobs = 32
+n_ensemble = 128 
+n_jobs = 128
 
-save_dir=f"/flash/DieckmannU/Abolfazl/3D_N({n_individuals})_b1({b1_rate})d1({d1_rate})_tmax({tmax})_n_ensemble({n_ensemble})"
+save_dir=f"/flash/DieckmannU/Abolfazl/4D_N({n_individuals})_b1({b1_rate})d1({d1_rate})_tmax({tmax})_n_ensemble({n_ensemble})"
 os.makedirs(save_dir, exist_ok=True)
 
 
 # results = Parallel(n_jobs=n_jobs)(delayed(run_single_sim)(n_individuals=n_individuals, b1_rate=b1_rate, d1_rate=d1_rate, tmax=tmax, indices=indices, t_lag=t_lag)    for i in range(n_ensemble))
-
-
-
-
-
-
 
 
 @contextmanager
@@ -225,11 +219,12 @@ with tqdm_joblib(tqdm(total=n_ensemble)) as progress_bar:
     )
 
 
+M_all    = np.array([r[0] for r in results])
+Mdot_all = np.array([r[1] for r in results])
+Vdot_all = np.array([r[2] for r in results])
+Sdot_all = np.array([r[3] for r in results])
 
-Mdot_all = np.array([r[0] for r in results])
-Vdot_all = np.array([r[1] for r in results])
-Sdot_all = np.array([r[2] for r in results])
-
+np.save(f"{save_dir}/M.npy", M_all)
 np.save(f"{save_dir}/Mdot.npy", Mdot_all)
 np.save(f"{save_dir}/Vdot.npy", Vdot_all)
 np.save(f"{save_dir}/Sdot.npy", Sdot_all)
