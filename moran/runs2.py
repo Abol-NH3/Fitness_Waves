@@ -161,6 +161,58 @@ def Quad_Sim_V00(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, trait_values
 
     return Main_3D, Moments
 
+@njit()  #Main_3D, Moments, AVG_HIST
+def Quad_Sim_V01(b1_rate, b2_rate, d1_rate, d2_rate, tmax, indices, trait_values):
+    n_individuals = len(trait_values)
+    n_out = len(indices)
+    Main_3D = np.zeros((3, n_out))
+    Moments = np.zeros(n_out)
+    dx = 0.01
+    max_bins = 20000          # spans ±1000 units from origin
+    origin = -max_bins * dx / 2 # = -1000.0  (bin 0 starts here)
+    AVG_HIST = np.zeros(max_bins)
+
+    k = 0
+    cum_mean_trait_value = 0.0
+
+    for t in range(1, tmax * n_individuals):
+        tv2 = trait_values ** 2
+        wb = 1 + b1_rate * trait_values + b2_rate * tv2
+        wd = 1 - d1_rate * trait_values - d2_rate * tv2
+        wb_eff = np.clip(wb, 0.0, np.inf)
+        wd_eff = np.clip(wd, 0.0, np.inf)
+        indice_birth = weighted_choice(wb_eff)
+        indice_death = weighted_choice(wd_eff)
+        birth_trait  = trait_values[indice_birth] + np.random.normal(0, 1)
+        trait_values[indice_death] = birth_trait
+        current_mean = np.mean(trait_values)
+        cum_mean_trait_value += current_mean
+        trait_values -= current_mean
+
+        if k < n_out and t == indices[k]:
+            Moments[k] = np.mean(trait_values ** 3)
+            Main_3D[0, k] = cum_mean_trait_value
+            Main_3D[2, k] = np.std(trait_values)
+            if Main_3D[2, k] == 0:
+                Main_3D[1, k] = 0.0
+            else:
+                Main_3D[1, k] = (np.sum((trait_values - np.mean(trait_values)) ** 3)
+                                 / (n_individuals * Main_3D[2, k] ** 3))
+
+            # --- accumulate into AVG_HIST ---
+            for val in trait_values:
+                bin_idx = int((val - origin) / dx)
+                if 0 <= bin_idx < max_bins:
+                    AVG_HIST[bin_idx] += 1.0
+
+            k += 1
+
+    AVG_HIST /= (n_out * n_individuals * dx)
+
+    return Main_3D, Moments, AVG_HIST
+
+
+
 
 def run_single_sim(n_individuals, b1_rate, d1_rate, tmax, indices, t_lag):
     Main_3D, Moments = Quad_Sim_V00(b1_rate, 0, d1_rate, 0, tmax, indices, np.zeros(n_individuals))
