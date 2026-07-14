@@ -228,19 +228,21 @@ def run_single_sim(n_individuals, b1_rate, d1_rate, tmax, indices, t_lag):
 
 
 n_individuals = 20000
-b1_rate = 0.15
-d1_rate = 0.15
+b1_rate = 0.5
+d1_rate = 0.5
 skip = 5
-tmax = 10005
+tmax = 100
 t_lag = 200
 indices = np.arange(skip*n_individuals, tmax*n_individuals, t_lag)
 n_out = len(indices)
 
 
-n_ensemble = 128 
-n_jobs = 128
+n_ensemble = 1 
+n_jobs = 1
 
-save_dir=f"/flash/DieckmannU/Abolfazl/4D_N({n_individuals})_b1({b1_rate})d1({d1_rate})_tmax({tmax})_n_ensemble({n_ensemble})"
+
+# /flash/DieckmannU/Abolfazl
+save_dir=f"C:/Results/Fitnesswaves/4D_N({n_individuals})_b1({b1_rate})d1({d1_rate})_tmax({tmax})_n_ensemble({n_ensemble})"
 os.makedirs(save_dir, exist_ok=True)
 
 
